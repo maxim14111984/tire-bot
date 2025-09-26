@@ -17,7 +17,7 @@ async def main():
 
     dp.include_router(photo_router)
 
-    @dp.message(lambda msg: msg.text == "/start")
+    @dp.message(lambda msg: msg.text and msg.text == "/start")
     async def cmd_start(message: Message):
         user_id = message.from_user.id
         await message.answer(
@@ -31,7 +31,7 @@ async def main():
             reply_markup=get_start_kb(user_id)
         )
 
-    @dp.message(lambda msg: msg.text == "/orders")
+    @dp.message(lambda msg: msg.text and msg.text == "/orders")
     async def cmd_orders(message: Message):
         from database.db import get_user_orders
         orders = await get_user_orders(message.from_user.id)
@@ -43,7 +43,7 @@ async def main():
             text += f"🔹 {order['tire_number']} — {order['created_at']}\n"
         await message.answer(text)
 
-    @dp.message(lambda msg: msg.text.startswith("/find "))
+    @dp.message(lambda msg: msg.text and msg.text.startswith("/find "))
     async def cmd_find(message: Message):
         from database.db import find_order_by_number
         query = message.text.replace("/find ", "").strip()
@@ -60,7 +60,7 @@ async def main():
             text += f"🔹 {order['tire_number']} — {order['created_at']} {user_info}\n"
         await message.answer(text)
 
-    @dp.message(lambda msg: msg.text == "/export")
+    @dp.message(lambda msg: msg.text and msg.text == "/export")
     async def cmd_export(message: Message):
         from database.db import export_user_orders_to_excel
         user_id = message.from_user.id
@@ -73,7 +73,7 @@ async def main():
         import os
         os.remove(filename)
 
-    @dp.message(lambda msg: msg.text == "/admin_orders")
+    @dp.message(lambda msg: msg.text and msg.text == "/admin_orders")
     async def cmd_admin_orders(message: Message):
         if message.from_user.id not in ADMIN_IDS:
             await message.answer("❌ У вас нет доступа к этой команде.")
