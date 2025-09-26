@@ -51,6 +51,14 @@ async def add_order(user_id: int, tire_number: str):
         )
         await db.commit()
 
+async def save_order(user_id: int, tire_number: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO orders (user_id, tire_number, created_at) VALUES (?, ?, ?)",
+            (user_id, tire_number, datetime.now().isoformat())
+        )
+        await db.commit()
+
 async def export_user_orders_to_excel(user_id: int, filename: str) -> bool:
     try:
         import pandas as pd
