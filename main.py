@@ -35,8 +35,19 @@ async def run_bot():
     async def cmd_orders(message):
         from database.db import get_user_orders
         orders = await get_user_orders(message.from_user.id)
-        await message.answer("У вас пока нет заказов." if not orders else 
-            "📋 Ваши заказы:\n\n" + "\n".join(f"🔹 {o['tire_number']} — {o['created_at']}" for o in orders))
+        if not orders:
+            await message.answer("У вас пока нет заказов.")
+            return
+        
+        await message.answer("📋 Ваши заказы:")
+        for order in orders:
+            if order.get("file_id"):
+                await message.answer_photo(
+                    photo=order["file_id"],
+                    caption=f"🔹 Номер шины: {order['tire_number']}\n📅 Дата: {order['created_at']}"
+                )
+            else:
+                await message.answer(f"🔹 {order['tire_number']} — {order['created_at']}")
 
     @dp.message(lambda msg: msg.text and msg.text.startswith("/find "))
     async def cmd_find(message):
