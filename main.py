@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 
 async def run_bot():
     bot = Bot(token=BOT_TOKEN)
-    dp = Dispatcher(storage=MemoryStorage())
+    storage = MemoryStorage()
+    dp = Dispatcher(storage=storage)
     dp.include_router(form_router)
     dp.include_router(status_router)
 
@@ -129,5 +130,4 @@ async def run_bot():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    # Запуск бота
     asyncio.run(run_bot())
