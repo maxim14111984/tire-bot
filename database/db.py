@@ -5,107 +5,117 @@ DB_PATH = "tire_bot.db"
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        # Таблица клиентов
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS clients (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                phone TEXT,
+                is_corporate BOOLEAN DEFAULT 0
+            )
+        """)
+        # Таблица шин
         await db.execute("""
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
+                client_id INTEGER NOT NULL,
                 tire_number TEXT NOT NULL,
                 file_id TEXT,
-                name TEXT,
-                size TEXT,
-                client TEXT,
-                work TEXT,
+                name TEXT,          -- Название шины
+                size TEXT,          -- Размер
+                work TEXT,          -- Работа
                 status TEXT DEFAULT 'В работе',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE
             )
         """)
-        # Добавляем новые колонки, если они ещё не существуют
-        new_columns = ["name", "size", "client", "work", "status"]
-        for col in new_columns:
-            try:
-                await db.execute(f"ALTER TABLE orders ADD COLUMN {col} TEXT")
-            except aiosqlite.OperationalError:
-                pass  # Колонка уже существует
         await db.commit()
     print("✅ База данных обновлена!")
 
-async def get_user_orders(user_id: int):
+# === КЛИЕНТЫ ===
+async def get_or_create_client(name: str, phone: str = None):
     async with aiosqlite.connect(DB_PATH) as db:
+        # Ищем клиента по имени и телефону
         cursor = await db.execute(
-            "SELECT id, tire_number, created_at, file_id, name, size, client, work, status FROM orders WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,)
+            "SELECT id, name, phone, is_corporate FROM clients WHERE name = ? OR phone = ?",
+            (name, phone)
         )
+        row = await cursor.fetchone()
+        if row:
+            return {"id": row[0], "name": row[1], "phone": row[2], "is_corporate": bool(row[3])}
+        
+        # Создаём нового клиента
+        await db.execute(
+            "INSERT INTO clients (name, phone) VALUES (?, ?)",
+            (name, phone)
+        )
+        await db.commit()
+        cursor = await db.execute("SELECT last_insert_rowid()")
+        client_id = (await cursor.fetchone())[0]
+        return {"id": client_id, "name": name, "phone": phone, "is_corporate": False}
+
+async def search_clients(query: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT id, name, phone, is_corporate 
+            FROM clients 
+            WHERE name LIKE ? OR phone LIKE ?
+            ORDER BY name
+        """, (f"%{query}%", f"%{query}%"))
+        rows = await cursor.fetchall()
+        return [
+            {"id": row[0], "name": row[1], "phone": row[2], "is_corporate": bool(row[3])}
+            for row in rows
+        ]
+
+# === ЗАКАЗЫ (ШИНЫ) ===
+async def save_order(client_id: int, tire_number: str, file_id: str = None,
+                     name: str = None, size: str = None, work: str = None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO orders (client_id, tire_number, file_id, name, size, work, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (client_id, tire_number, file_id, name, size, work, datetime.now().isoformat()))
+        await db.commit()
+
+async def get_orders_by_client(client_id: int, status_filter: str = None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        if status_filter:
+            cursor = await db.execute("""
+                SELECT id, tire_number, file_id, name, size, work, status, created_at
+                FROM orders
+                WHERE client_id = ? AND status = ?
+                ORDER BY created_at DESC
+            """, (client_id, status_filter))
+        else:
+            cursor = await db.execute("""
+                SELECT id, tire_number, file_id, name, size, work, status, created_at
+                FROM orders
+                WHERE client_id = ?
+                ORDER BY created_at DESC
+            """, (client_id,))
         rows = await cursor.fetchall()
         return [{
             "id": row[0],
             "tire_number": row[1],
-            "created_at": row[2],
-            "file_id": row[3],
-            "name": row[4] or "",
-            "size": row[5] or "",
-            "client": row[6] or "",
-            "work": row[7] or "",
-            "status": row[8] or "В работе"
+            "file_id": row[2],
+            "name": row[3] or "",
+            "size": row[4] or "",
+            "work": row[5] or "",
+            "status": row[6],
+            "created_at": row[7]
         } for row in rows]
-
-async def find_order_by_number(query: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT id, user_id, tire_number, created_at, file_id, name, size, client, work, status FROM orders WHERE tire_number LIKE ? ORDER BY created_at DESC",
-            (f"%{query}%",)
-        )
-        rows = await cursor.fetchall()
-        return [{
-            "id": row[0],
-            "user_id": row[1],
-            "tire_number": row[2],
-            "created_at": row[3],
-            "file_id": row[4],
-            "name": row[5] or "",
-            "size": row[6] or "",
-            "client": row[7] or "",
-            "work": row[8] or "",
-            "status": row[9] or "В работе"
-        } for row in rows]
-
-async def get_all_orders():
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT id, user_id, tire_number, created_at, file_id, name, size, client, work, status FROM orders ORDER BY created_at DESC"
-        )
-        rows = await cursor.fetchall()
-        return [{
-            "id": row[0],
-            "user_id": row[1],
-            "tire_number": row[2],
-            "created_at": row[3],
-            "file_id": row[4],
-            "name": row[5] or "",
-            "size": row[6] or "",
-            "client": row[7] or "",
-            "work": row[8] or "",
-            "status": row[9] or "В работе"
-        } for row in rows]
-
-async def save_order(user_id: int, tire_number: str, file_id: str = None,
-                     name: str = None, size: str = None,
-                     client: str = None, work: str = None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            INSERT INTO orders (user_id, tire_number, file_id, name, size, client, work, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, tire_number, file_id, name, size, client, work, datetime.now().isoformat()))
-        await db.commit()
 
 async def update_order_status(order_id: int, status: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE orders SET status = ? WHERE id = ?", (status, order_id))
         await db.commit()
 
-async def export_user_orders_to_excel(user_id: int, filename: str) -> bool:
+# === ЭКСПОРТ ===
+async def export_client_orders_to_excel(client_id: int, filename: str) -> bool:
     try:
         import pandas as pd
-        orders = await get_user_orders(user_id)
+        orders = await get_orders_by_client(client_id)
         if not orders:
             return False
         df = pd.DataFrame([
@@ -113,7 +123,6 @@ async def export_user_orders_to_excel(user_id: int, filename: str) -> bool:
                 "Номер шины": o["tire_number"],
                 "Название": o["name"],
                 "Размер": o["size"],
-                "Клиент": o["client"],
                 "Работа": o["work"],
                 "Статус": o["status"],
                 "Дата": o["created_at"]
