@@ -1,5 +1,9 @@
+# main.py
+import os
 import asyncio
 import logging
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from aiogram import Bot, Dispatcher
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import Message
@@ -11,10 +15,31 @@ from keyboards.reply_kb import get_start_kb
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-async def main():
+# --- HTTP-сервер для Render (минимальный, без Flask) ---
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == '/':
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"OK")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def log_message(self, format, *args):
+        return  # отключаем логи HTTP-сервера
+
+def run_http_server():
+    port = int(os.getenv("PORT", 8000))
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"HTTP-сервер запущен на порту {port}")
+    server.serve_forever()
+
+# --- Основная логика бота (без изменений) ---
+async def run_bot():
     bot = Bot(token=BOT_TOKEN)
     dp = Dispatcher(storage=MemoryStorage())
-
     dp.include_router(photo_router)
 
     @dp.message(lambda msg: msg.text and msg.text == "/start")
@@ -89,10 +114,15 @@ async def main():
         await message.answer(text)
 
     await init_db()
-
     await bot.delete_webhook(drop_pending_updates=True)
     logger.info("🚀 Бот запущен...")
     await dp.start_polling(bot)
 
+# --- Запуск всего вместе ---
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Запускаем HTTP-сервер в отдельном потоке
+    http_thread = threading.Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+
+    # Запускаем бота в основном потоке (асинхронно)
+    asyncio.run(run_bot())
