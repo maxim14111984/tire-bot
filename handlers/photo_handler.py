@@ -39,4 +39,4 @@ async def find_order_by_number(query: str):
             (f"%{query}%",)
         )
         rows = await cursor.fetchall()
-        return [{"user_id": row[0], "tire_number":
+        return [{"user_id": row[0], "tire_number": row[1], "created_at": row[2], "file_id": row[3]} for row in rows]
