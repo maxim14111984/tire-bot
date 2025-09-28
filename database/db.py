@@ -72,4 +72,3 @@ async def export_user_orders_to_excel(user_id: int, filename: str) -> bool:
     except Exception as e:
         print(f"Ошибка экспорта: {e}")
         return False
-        
