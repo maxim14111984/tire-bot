@@ -1,23 +1,21 @@
-import aiosqlite
-from datetime import datetime
+from aiogram import Router, F
+from aiogram.types import Message
+from database.db import save_order
 
-DB_PATH = "tire_bot.db"
+# Создаём роутер — именно он нужен для импорта в main.py
+router = Router()
 
-# ... весь ваш код ...
+@router.message(F.photo)
+async def handle_photo(message: Message):
+    user_id = message.from_user.id
+    photo = message.photo[-1]  # Берём фото в максимальном разрешении
+    file_id = photo.file_id
 
-async def export_user_orders_to_excel(user_id: int, filename: str) -> bool:
-    try:
-        import pandas as pd
-        orders = await get_user_orders(user_id)
-        if not orders:
-            return False
-        df = pd.DataFrame([
-            {"tire_number": o["tire_number"], "created_at": o["created_at"]}
-            for o in orders
-        ])
-        df.to_excel(filename, index=False)
-        return True
-    except Exception as e:
-        print(f"Ошибка экспорта: {e}")
-        return False
-  # ← Вот здесь должна быть пустая строка (нажмите Enter в конце файла)
+    # Получаем номер шины из подписи к фото
+    tire_number = message.caption.strip() if message.caption else "не указано"
+
+    # Сохраняем заказ в базу данных
+    await save_order(user_id, tire_number, file_id)
+
+    # Отправляем подтверждение
+    await message.answer(f"✅ Шина '{tire_number}' добавлена в учёт!")
