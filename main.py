@@ -83,4 +83,51 @@ async def run_bot():
             if order.get("file_id"):
                 await message.answer_photo(photo=order["file_id"], caption=caption)
             else:
-                await
+                await message.answer(caption)
+
+    @dp.message(lambda msg: msg.text and msg.text == "/export")
+    async def cmd_export(message):
+        from database.db import export_user_orders_to_excel
+        user_id = message.from_user.id
+        filename = f"orders_{user_id}.xlsx"
+        if await export_user_orders_to_excel(user_id, filename):
+            await message.answer_document(document=filename)
+            os.remove(filename)
+        else:
+            await message.answer("У вас нет заказов для экспорта.")
+
+    @dp.message(lambda msg: msg.text and msg.text == "/admin_orders")
+    async def cmd_admin_orders(message):
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("❌ У вас нет доступа к этой команде.")
+            return
+        from database.db import get_all_orders
+        orders = await get_all_orders()
+        if not orders:
+            await message.answer("Нет заказов в системе.")
+            return
+        await message.answer("👑 Все заказы (админ):")
+        for order in orders:
+            caption = (
+                f"🔹 Номер: {order['tire_number']}\n"
+                f"📝 Название: {order['name']}\n"
+                f"📏 Размер: {order['size']}\n"
+                f"👤 Клиент: {order['client']}\n"
+                f"🔧 Работа: {order['work']}\n"
+                f"🏷 Статус: {order['status']}\n"
+                f"📅 Дата: {order['created_at']}\n"
+                f"🆔 ID: {order['id']}"
+            )
+            if order.get("file_id"):
+                await message.answer_photo(photo=order["file_id"], caption=caption)
+            else:
+                await message.answer(caption)
+
+    await init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("🚀 Бот запущен...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    # Запуск бота
+    asyncio.run(run_bot())
