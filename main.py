@@ -1,74 +1,91 @@
-import aiosqlite
-from datetime import datetime
+# main.py
+import os
+import asyncio
+import logging
+from aiogram import Bot, Dispatcher
+from aiogram.fsm.storage.memory import MemoryStorage
+from config import BOT_TOKEN, ADMIN_IDS
+from database.db import init_db
+from handlers.photo_handler import router as photo_router
+from keyboards.reply_kb import get_start_kb
 
-DB_PATH = "tire_bot.db"
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-async def init_db():
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                tire_number TEXT NOT NULL,
-                file_id TEXT,
-                created_at TEXT NOT NULL
-            )
-        """)
-        # Попытка добавить колонку file_id, если таблица уже существовала без неё
-        try:
-            await db.execute("ALTER TABLE orders ADD COLUMN file_id TEXT")
-        except aiosqlite.OperationalError:
-            # Колонка уже существует — ничего не делаем
-            pass
-        await db.commit()
-    print("✅ База данных инициализирована!")
+async def run_bot():
+    bot = Bot(token=BOT_TOKEN)
+    dp = Dispatcher(storage=MemoryStorage())
+    dp.include_router(photo_router)
 
-async def get_user_orders(user_id: int):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT tire_number, created_at, file_id FROM orders WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,)
+    @dp.message(lambda msg: msg.text and msg.text == "/start")
+    async def cmd_start(message):
+        user_id = message.from_user.id
+        await message.answer(
+            "👋 Добро пожаловать в бот учёта шин!\n\n"
+            "📌 Команды:\n"
+            "• /start — главное меню\n"
+            "• /orders — мои заказы\n"
+            "• /find <номер> — найти по номеру\n"
+            "• /export — скачать Excel (мои заказы)\n"
+            + ("• /admin_orders — все заказы (админ)\n" if user_id in ADMIN_IDS else ""),
+            reply_markup=get_start_kb(user_id)
         )
-        rows = await cursor.fetchall()
-        return [{"tire_number": row[0], "created_at": row[1], "file_id": row[2]} for row in rows]
 
-async def find_order_by_number(query: str):
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT user_id, tire_number, created_at, file_id FROM orders WHERE tire_number LIKE ? ORDER BY created_at DESC",
-            (f"%{query}%",)
-        )
-        rows = await cursor.fetchall()
-        return [{"user_id": row[0], "tire_number": row[1], "created_at": row[2], "file_id": row[3]} for row in rows]
+    @dp.message(lambda msg: msg.text and msg.text == "/orders")
+    async def cmd_orders(message):
+        from database.db import get_user_orders
+        orders = await get_user_orders(message.from_user.id)
+        await message.answer("У вас пока нет заказов." if not orders else 
+            "📋 Ваши заказы:\n\n" + "\n".join(f"🔹 {o['tire_number']} — {o['created_at']}" for o in orders))
 
-async def get_all_orders():
-    async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute(
-            "SELECT user_id, tire_number, created_at, file_id FROM orders ORDER BY created_at DESC"
-        )
-        rows = await cursor.fetchall()
-        return [{"user_id": row[0], "tire_number": row[1], "created_at": row[2], "file_id": row[3]} for row in rows]
-
-async def save_order(user_id: int, tire_number: str, file_id: str = None):
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
-            "INSERT INTO orders (user_id, tire_number, file_id, created_at) VALUES (?, ?, ?, ?)",
-            (user_id, tire_number, file_id, datetime.now().isoformat())
-        )
-        await db.commit()
-
-async def export_user_orders_to_excel(user_id: int, filename: str) -> bool:
-    try:
-        import pandas as pd
-        orders = await get_user_orders(user_id)
+    @dp.message(lambda msg: msg.text and msg.text.startswith("/find "))
+    async def cmd_find(message):
+        from database.db import find_order_by_number
+        query = message.text.replace("/find ", "").strip()
+        if not query:
+            await message.answer("Пожалуйста, укажите номер шины: /find 12345")
+            return
+        orders = await find_order_by_number(query)
         if not orders:
-            return False
-        df = pd.DataFrame([
-            {"tire_number": o["tire_number"], "created_at": o["created_at"]}
-            for o in orders
-        ])
-        df.to_excel(filename, index=False)
-        return True
-    except Exception as e:
-        print(f"Ошибка экспорта: {e}")
-        return False
+            await message.answer("Не найдено заказов с таким номером.")
+            return
+        text = "🔍 Найденные заказы:\n\n"
+        for order in orders:
+            user_info = " (админ)" if order['user_id'] in ADMIN_IDS else ""
+            text += f"🔹 {order['tire_number']} — {order['created_at']}{user_info}\n"
+        await message.answer(text)
+
+    @dp.message(lambda msg: msg.text and msg.text == "/export")
+    async def cmd_export(message):
+        from database.db import export_user_orders_to_excel
+        user_id = message.from_user.id
+        filename = f"orders_{user_id}.xlsx"
+        if await export_user_orders_to_excel(user_id, filename):
+            await message.answer_document(document=filename)
+            os.remove(filename)
+        else:
+            await message.answer("У вас нет заказов для экспорта.")
+
+    @dp.message(lambda msg: msg.text and msg.text == "/admin_orders")
+    async def cmd_admin_orders(message):
+        if message.from_user.id not in ADMIN_IDS:
+            await message.answer("❌ У вас нет доступа к этой команде.")
+            return
+        from database.db import get_all_orders
+        orders = await get_all_orders()
+        if not orders:
+            await message.answer("Нет заказов в системе.")
+            return
+        text = "👑 Все заказы (админ):\n\n"
+        for order in orders:
+            text += f"🔹 {order['tire_number']} — @{order['user_id']} — {order['created_at']}\n"
+        await message.answer(text)
+
+    await init_db()
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("🚀 Бот запущен...")
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    # Запуск бота
+    asyncio.run(run_bot())
